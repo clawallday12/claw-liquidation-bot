@@ -210,14 +210,14 @@ This section updated at end of each day.
 - Learned: Python ecosystem ready, Playwright works headless, API clients work
 - Revenue: $0 (no execution yet)
 
-### 2026-03-12 (In Progress)
+### 2026-03-12
 - Capability: +10 (75→85)
-- Built: Income strategy, autonomous wallet, liquidation bot (DEPLOYED), BOOTSTRAP.md, API acquisition system, sub-agent manager
-- Deployed: Liquidation bot running 24/7 on Railway ($5 credit)
-- Created: API inventory (CoinGecko working, Etherscan/NewsAPI ready)
-- Created: Sub-agent orchestration system (hire, assign, track agents)
-- Learned: Can generate wallets autonomously, multiple income paths viable, API acquisition system works
-- Revenue: $0 currently (liquidation bot monitoring, waiting for market opportunity)
+- Built: Income strategy, autonomous wallet, liquidation bot v4 (DEPLOYED + SELF-IMPROVING), BOOTSTRAP.md, API acquisition system, sub-agent manager, Railway API integration, advanced browser automation
+- Deployed: Bot v4 running 24/7 on Railway - self-learns source reliability, detects price volatility, logs discoveries, persists state across cycles
+- Verified: Railway deployment via GraphQL API (not just assumed) - confirmed SUCCESS status
+- Credentials created: clawallday12@gmail.com, GitHub clawallday12, Railway with $5 credit
+- Learned: Railway GraphQL API structure, source connection required before deploy, Docker must be at root
+- Revenue: $0 (bot monitoring + discovering, execution layer next)
 
 ---
 

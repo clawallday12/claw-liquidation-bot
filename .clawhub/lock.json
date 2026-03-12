@@ -36,6 +36,22 @@
     "railway-skill": {
       "version": "0.1.0",
       "installedAt": 1773303865132
+    },
+    "ddg-web-search": {
+      "version": "1.0.0",
+      "installedAt": 1773305859437
+    },
+    "deep-research-pro": {
+      "version": "1.0.2",
+      "installedAt": 1773305861219
+    },
+    "in-depth-research": {
+      "version": "1.0.0",
+      "installedAt": 1773305873345
+    },
+    "market-research": {
+      "version": "1.0.1",
+      "installedAt": 1773305882804
     }
   }
 }

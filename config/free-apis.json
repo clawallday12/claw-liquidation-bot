@@ -1,0 +1,61 @@
+{
+  "CoinGecko prices": {
+    "status": "working",
+    "sample": "BTC=$69,643 ETH=$2,041.68"
+  },
+  "CoinGecko trending": {
+    "status": "HTTP 404"
+  },
+  "Binance BTC price": {
+    "status": "HTTP 451"
+  },
+  "Binance top pairs": {
+    "status": "HTTP 451"
+  },
+  "Binance orderbook BTC": {
+    "status": "HTTP 451"
+  },
+  "DeFiLlama TVL": {
+    "status": "working",
+    "sample": "7191 protocols, top: Binance CEX $150.7B"
+  },
+  "DeFiLlama chains": {
+    "status": "working",
+    "sample": "Top chains: ['Ethereum', 'Solana', 'Binance']"
+  },
+  "DeFiLlama yields": {
+    "status": "working",
+    "sample": "19153 yield pools"
+  },
+  "ETH block": {
+    "status": "working",
+    "sample": "Block 24,640,452"
+  },
+  "ETH gas": {
+    "status": "working",
+    "sample": "Gas: 0.0 gwei"
+  },
+  "Polygon block": {
+    "status": "HTTP 401"
+  },
+  "Fear & Greed Index": {
+    "status": "working",
+    "sample": "18 (Extreme Fear)"
+  },
+  "BTC dominance": {
+    "status": "working",
+    "sample": "BTC dominance: 56.8%"
+  },
+  "DeFi stats": {
+    "status": "working",
+    "sample": "DeFi TVL: $81.7B"
+  },
+  "CryptoCompare news": {
+    "status": "working",
+    "sample": "50 articles, latest: Shiba Inu and Mantle Stumble While APEMARS Stage 1"
+  },
+  "Coinglass funding": {
+    "status": "working",
+    "sample": "code=30001 success=False"
+  }
+}

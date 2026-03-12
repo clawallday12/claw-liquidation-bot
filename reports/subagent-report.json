@@ -1,0 +1,27 @@
+{
+  "timestamp": "2026-03-12T07:46:08.486126",
+  "agents": {
+    "total": 2,
+    "active": 0,
+    "idle": 2
+  },
+  "tasks": {
+    "pending": 0,
+    "assigned": 0,
+    "completed": 2,
+    "total": 2
+  },
+  "finances": {
+    "total_spent": 22.5,
+    "agents_by_earnings": [
+      [
+        "Twitter Content Creator",
+        15.0
+      ],
+      [
+        "Data Analyst",
+        7.5
+      ]
+    ]
+  }
+}

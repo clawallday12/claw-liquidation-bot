@@ -1,0 +1,30 @@
+# Credentials
+config/autonomous-credentials.json
+config/autonomous-identity.json
+
+# Environment
+.env
+.venv
+venv/
+
+# Logs
+logs/
+*.log
+
+# Cache
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Sensitive data
+*.key
+*.pem
+seed_phrase.txt

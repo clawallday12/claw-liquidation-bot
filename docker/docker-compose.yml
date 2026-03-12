@@ -1,0 +1,14 @@
+version: '3.8'
+services:
+  liquidation-bot:
+    build: .
+    environment:
+      - WALLET_ADDRESS=0xA8297c4B031022D8d8e3Ce76322139A0120D6931
+      - PRIVATE_KEY=${PRIVATE_KEY}
+      - RPC_URL=${RPC_URL}
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

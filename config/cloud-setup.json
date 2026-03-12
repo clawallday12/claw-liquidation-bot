@@ -1,0 +1,20 @@
+{
+  "email": null,
+  "deployment_options": {
+    "railway": "Recommended (easiest automation)",
+    "aws": "Most control, requires manual signup",
+    "vps": "Digital Ocean/Linode ($5/month)"
+  },
+  "next_steps": [
+    "1. Choose deployment platform (Railway recommended)",
+    "2. Create GitHub account for code storage",
+    "3. Deploy Docker container",
+    "4. Set environment variables (WALLET, RPC_URL)",
+    "5. Monitor bot logs in dashboard"
+  ],
+  "docker_files_created": [
+    "Dockerfile",
+    "requirements.txt",
+    "docker-compose.yml"
+  ]
+}

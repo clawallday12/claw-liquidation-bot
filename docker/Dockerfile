@@ -17,4 +17,4 @@ COPY requirements.txt .
 RUN pip install -r requirements.txt
 
 # Run liquidation bot
-CMD ["python", "liquidation-bot.py"]
+CMD ["python", "web3/liquidation-bot-v3.py"]

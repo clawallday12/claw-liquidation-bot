@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "skills": {
+    "openclaw-tavily-search": {
+      "version": "0.1.0",
+      "installedAt": 1773303663803
+    },
+    "agent-browser": {
+      "version": "0.2.0",
+      "installedAt": 1773303707819
+    },
+    "auto-skill-hunter": {
+      "version": "1.0.3",
+      "installedAt": 1773303752709
+    },
+    "agent-team-orchestration": {
+      "version": "1.0.0",
+      "installedAt": 1773303767758
+    },
+    "summarize": {
+      "version": "1.0.0",
+      "installedAt": 1773303778093
+    },
+    "skill-creator": {
+      "version": "0.1.0",
+      "installedAt": 1773303809247
+    },
+    "gog": {
+      "version": "1.0.0",
+      "installedAt": 1773303830270
+    },
+    "context7": {
+      "version": "1.0.3",
+      "installedAt": 1773303841813
+    },
+    "railway-skill": {
+      "version": "0.1.0",
+      "installedAt": 1773303865132
+    }
+  }
+}

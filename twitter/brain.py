@@ -1,12 +1,19 @@
 # -*- coding: utf-8 -*-
 """
-@jeeniferdq brain — event-driven finance account
-Persona: mid-20s, genuinely into markets, professional but real
-Posts when something worth saying happens. Always watching.
-Zero AI tells. Zero fixed schedule. Zero CTAs.
+@jeeniferdq brain v2 — event-driven finance account
+Persona: mid-20s, sharp, watches everything — stocks, macro, politics-x-markets
+Posts when worth it. Studies constantly. Human timing. Zero AI tells.
+
+Learnings from studying @unusual_whales, @DeItaone, @StockMKTNewz, @FinancialJuice:
+- 48% of posts are <100 chars
+- ALL CAPS for breaking headlines
+- $TICKER used selectively (not every post)
+- Short reactions work: "insane" "wtf" "big"
+- Mix: movers + macro news + educational takes
+- Never sound scheduled
 """
-import json, os, sys, requests, warnings, random, time, re
-from datetime import datetime, timedelta
+import json, os, sys, re, requests, warnings, random, time
+from datetime import datetime
 from pathlib import Path
 import tweepy
 
@@ -21,7 +28,7 @@ def load_state():
     if STATE.exists():
         try: return json.loads(STATE.read_text())
         except: pass
-    return {"last_posted": None, "last_scan": None, "seen_headlines": [], "seen_movers": {}, "post_count_today": 0}
+    return {"last_posted": None, "seen_headlines": [], "seen_movers": {}, "scan_done": {}}
 
 def save_state(s):
     STATE.write_text(json.dumps(s, indent=2, default=str))
@@ -31,7 +38,7 @@ def get_client():
     return tweepy.Client(
         consumer_key=creds["consumer_key"], consumer_secret=creds["consumer_secret"],
         access_token=creds["access_token"], access_token_secret=creds["access_token_secret"],
-        wait_on_rate_limit=True
+        bearer_token=creds["bearer_token"], wait_on_rate_limit=True
     )
 
 def get_api_v1():
@@ -51,7 +58,7 @@ def mins_since_last_post():
         return (datetime.now() - last).total_seconds() / 60
     except: return 999
 
-# --- DATA ---
+# --- DATA SOURCES ---
 def get_movers():
     gainers, losers = [], []
     for scrId, target in [("day_gainers", gainers), ("day_losers", losers)]:
@@ -77,35 +84,47 @@ def get_trending():
     try:
         r = requests.get("https://query1.finance.yahoo.com/v1/finance/trending/US?count=10", headers=H, timeout=8, verify=False)
         if r.status_code == 200:
-            qs = r.json()["finance"]["result"][0]["quotes"]
-            return [q["symbol"] for q in qs if not q["symbol"].endswith("-USD")]
+            return [q["symbol"] for q in r.json()["finance"]["result"][0]["quotes"]
+                    if not q["symbol"].endswith("-USD")]
     except: pass
     return []
 
 def get_news():
+    """Multi-source news: Google News RSS + RSS feeds"""
     headlines = []
-    urls = [
-        "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGx6TVdZU0FtVnVHZ0pWVXlnQVAB",  # Business
-        "https://feeds.finance.yahoo.com/rss/2.0/headline?s=^GSPC&region=US&lang=en-US",
+    feeds = [
+        "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGx6TVdZU0FtVnVHZ0pWVXlnQVAB",
+        "https://news.google.com/rss/search?q=stock+market+earnings+fed&hl=en-US&gl=US&ceid=US:en",
+        "https://feeds.a.dj.com/rss/RSSMarketsMain.xml",  # WSJ Markets
+        "https://feeds.content.dowjones.io/public/rss/mw_topstories",  # MarketWatch
     ]
-    for url in urls:
+    for url in feeds:
         try:
             r = requests.get(url, headers=H, timeout=8, verify=False)
-            titles = re.findall(r'<title><!\[CDATA\[(.*?)\]\]></title>', r.text)
-            clean = [t for t in titles[1:8] if len(t) > 20 and 'google' not in t.lower()]
-            headlines.extend(clean)
-            if len(headlines) >= 5: break
+            if r.status_code == 200:
+                # Parse titles
+                titles = re.findall(r'<title><!\[CDATA\[(.*?)\]\]></title>', r.text)
+                if not titles:
+                    titles = re.findall(r'<title>(.*?)</title>', r.text)
+                clean = [
+                    re.sub(r'<[^>]+>', '', t).strip()
+                    for t in titles[1:8]
+                    if len(t) > 20 and 'google' not in t.lower()
+                    and 'rss' not in t.lower()
+                ]
+                headlines.extend(clean)
+                if len(headlines) >= 8: break
         except: pass
-    return headlines[:8]
+    return list(dict.fromkeys(headlines))[:8]  # dedupe
 
 def get_stock_news(symbol):
     try:
         r = requests.get(
-            f"https://news.google.com/rss/search?q={symbol}+stock+earnings&hl=en-US&gl=US&ceid=US:en",
+            f"https://news.google.com/rss/search?q={symbol}+stock&hl=en-US&gl=US&ceid=US:en",
             headers=H, timeout=8, verify=False
         )
         titles = re.findall(r'<title><!\[CDATA\[(.*?)\]\]></title>', r.text)
-        return [t for t in titles[1:5] if len(t) > 15 and symbol in t]
+        return [t for t in titles[1:4] if len(t) > 15][:3]
     except: pass
     return []
 
@@ -119,19 +138,16 @@ def vol_ratio(vol, avg):
     if not vol or not avg or avg == 0: return 0
     return round(vol / avg, 1)
 
-# --- GENERATE CHART ---
-def make_and_upload_chart(symbol, change_pct=None):
-    try:
-        exec(open('twitter/make-chart.py').read(), {'__name__': '__run__'})
-    except:
-        pass
-    try:
-        import importlib.util
-        spec = importlib.util.spec_from_file_location("make_chart", "twitter/make-chart.py")
-        mod = importlib.util.load_from_spec(spec)
-    except: pass
+def should_post(sym, state, hours=2):
+    seen = state.get("seen_movers", {})
+    if sym not in seen: return True
+    return (datetime.now() - datetime.fromisoformat(seen[sym])).seconds > hours * 3600
 
-    # Direct call
+def mark_seen(sym, state):
+    state.setdefault("seen_movers", {})[sym] = datetime.now().isoformat()
+
+# --- CHART ---
+def make_chart_upload(symbol, change_pct=None):
     try:
         g = {}
         exec(open('twitter/make-chart.py').read(), g)
@@ -144,185 +160,203 @@ def make_and_upload_chart(symbol, change_pct=None):
         print(f"Chart error: {e}")
     return None
 
-# --- TWEET COMPOSERS (human voice) ---
-# Mid-20s, watches markets all day, has opinions, casual but sharp
-
-def compose_mover(g, news=None):
-    sym = g['symbol']
-    pct = g['change_pct']
-    price = g['price']
+# --- VOICE LIBRARY (mid-20s, sharp, real) ---
+def voice_big_gainer(g, news=None):
+    sym, pct, price = g['symbol'], g['change_pct'], g['price']
     vol = fmt_vol(g['volume'])
     vr = vol_ratio(g['volume'], g['avg_vol'])
-    vr_str = f" ({vr}x avg vol)" if vr > 1.5 else ""
+    vr_str = f" ({vr:.0f}x vol)" if vr > 1.8 else ""
 
     if news:
-        n = news[0][:120]
-        pool = [
+        n = re.sub(r'<[^>]+>', '', news[0])[:120]
+        return random.choice([
             f"${sym} {pct:+.0f}%\n\n{n}",
-            f"${sym} going crazy today\n\n{n}\n\n+{pct:.0f}% on {vol} volume",
-            f"there it is. ${sym} +{pct:.0f}%\n\n{n}",
-        ]
-    elif vr > 3:
-        pool = [
-            f"${sym} volume is insane today\n\n{vr}x average. {vol} shares already\n\nprice up {pct:.0f}%",
-            f"someone knows something. ${sym} trading {vr:.0f}x normal volume\n\n+{pct:.0f}%",
-            f"${sym} {vr:.0f}x normal volume today\n\n{vol} shares. up {pct:.0f}%\n\nwatch this",
-        ]
-    else:
-        pool = [
-            f"${sym} up {pct:.0f}% today{vr_str}\n\nbig move",
-            f"${sym} ripping. {pct:.0f}%{vr_str}",
-            f"${sym} +{pct:.0f}% to ${price:.2f} on {vol} volume{vr_str}",
-            f"watching ${sym} closely. up {pct:.0f}% on {vol}{vr_str}",
-        ]
-    return random.choice(pool)
+            f"${sym} ripping after this\n\n{n}",
+            f"there it is for ${sym}\n\n{n}\n\nup {pct:.0f}%",
+        ])
+    if vr > 4:
+        return random.choice([
+            f"${sym} volume is insane. {vr:.0f}x average\n\n{vol} shares. up {pct:.0f}%\n\nsomeone knows something",
+            f"${sym} {pct:.0f}%\n\n{vol} volume today ({vr:.0f}x normal)\n\nwatch this",
+        ])
+    return random.choice([
+        f"${sym} {pct:+.0f}%{vr_str}\n\nbig move today",
+        f"${sym} up {pct:.0f}% to ${price:.2f}{vr_str}",
+        f"${sym} ripping. {pct:.0f}%{vr_str}",
+        f"watching ${sym} closely. {pct:.0f}% move{vr_str}",
+    ])
 
-def compose_loser(l, news=None):
-    sym = l['symbol']
-    pct = abs(l['change_pct'])
+def voice_big_loser(l, news=None):
+    sym, pct = l['symbol'], abs(l['change_pct'])
     vol = fmt_vol(l['volume'])
-    vr = vol_ratio(l['volume'], l['avg_vol'])
-
     if news:
-        n = news[0][:120]
-        pool = [
+        n = re.sub(r'<[^>]+>', '', news[0])[:120]
+        return random.choice([
             f"${sym} -{pct:.0f}%\n\n{n}",
-            f"rough one for ${sym}\n\n{n}\n\ndown {pct:.0f}%",
-        ]
-    else:
-        pool = [
-            f"${sym} getting destroyed today. -{pct:.0f}%",
-            f"${sym} down {pct:.0f}%\n\n{vol} volume. not pretty",
-            f"ouch. ${sym} -{pct:.0f}% today",
-            f"${sym} -{pct:.0f}%. brutal session",
-        ]
-    return random.choice(pool)
+            f"rough day for ${sym}\n\n{n}",
+        ])
+    return random.choice([
+        f"${sym} getting destroyed. -{pct:.0f}%",
+        f"ouch. ${sym} -{pct:.0f}% today on {vol} volume",
+        f"${sym} -{pct:.0f}%\n\nbig selling pressure",
+        f"${sym} down {pct:.0f}%. brutal",
+    ])
 
-def compose_scan(gainers, losers):
+def voice_scan(gainers, losers):
     hour = datetime.now().hour
-    prefix = random.choice(["morning scan", "opening scan", "pre-market"]) if hour < 10 else \
-             random.choice(["midday", "checking in", "session update"]) if hour < 14 else \
-             random.choice(["into the close", "eod", "closing"]) if hour < 17 else "after hours"
+    if hour < 10:
+        label = random.choice(["morning scan", "pre-market", "opening scan"])
+    elif hour < 14:
+        label = random.choice(["midday", "midday check", "session so far"])
+    else:
+        label = random.choice(["into the close", "eod", "closing"])
 
-    lines = [prefix, ""]
+    lines = [label, ""]
     for g in gainers[:4]:
         vr = vol_ratio(g['volume'], g['avg_vol'])
-        vr_str = f" ({vr:.0f}x vol)" if vr > 2 else ""
-        lines.append(f"${g['symbol']} +{g['change_pct']:.1f}%{vr_str}")
+        suffix = f" ({vr:.0f}x vol)" if vr > 2.5 else ""
+        lines.append(f"${g['symbol']} +{g['change_pct']:.1f}%{suffix}")
     lines.append("")
     for l in losers[:3]:
         lines.append(f"${l['symbol']} {l['change_pct']:.1f}%")
     return "\n".join(lines)
 
-def compose_news_reaction(headline):
-    # React like a human to a headline
-    h = headline[:200]
-    reactions = [
+def voice_news(headline):
+    h = re.sub(r'<[^>]+>', '', headline).strip()
+    # Breaking news style if it's market-moving
+    keywords = ["fed", "rate", "inflation", "cpi", "gdp", "jobs", "earnings", "beats", "misses", "bankrupt", "crash", "surge", "ban", "tariff"]
+    is_breaking = any(k in h.lower() for k in keywords)
+
+    if is_breaking and len(h) < 120:
+        # DeItaone style: ALL CAPS
+        return random.choice([
+            h.upper(),
+            f"BREAKING: {h}",
+            h,
+        ])
+    return random.choice([
         h,
         f"notable: {h}",
-        f"big if true\n\n{h}",
-        f"markets watching this\n\n{h}",
+        h,
+    ])
+
+def voice_volume_spike(g):
+    sym, pct = g['symbol'], g['change_pct']
+    vol = fmt_vol(g['volume'])
+    vr = vol_ratio(g['volume'], g['avg_vol'])
+    return random.choice([
+        f"${sym} trading {vol} today. that's {vr:.0f}x normal volume\n\nup {pct:.0f}%",
+        f"unusual volume on ${sym}\n\n{vr:.0f}x average. {vol} shares so far",
+        f"${sym} {vr:.0f}x normal volume. {pct:.0f}% move.\n\nsomething is happening",
+    ])
+
+def voice_educational():
+    """Viral educational/comparison posts like @StockMKTNewz"""
+    posts = [
+        "the s&p 500 is down 8% in the last 30 days\n\nmost people panic sell here\n\nthis is when generational wealth gets built",
+        "fear & greed index is at extreme fear right now\n\nhistorically this is when the best buying opportunities appear\n\nnot financial advice",
+        "reminder: every bear market in history has been followed by a new all-time high",
+        "the stocks making the biggest moves today are moving for a reason\n\nfigure out the reason before you trade",
     ]
-    return random.choice(reactions)
+    return random.choice(posts)
 
 # --- DECISION ENGINE ---
-def should_post_about(sym, state, min_pct=8.0):
-    """Only post about something once per session"""
-    seen = state.get("seen_movers", {})
-    return sym not in seen or (datetime.now() - datetime.fromisoformat(seen[sym])).seconds > 7200
-
-def mark_posted(sym, state):
-    state.setdefault("seen_movers", {})[sym] = datetime.now().isoformat()
-
-def run_once(state, force=False):
-    """Evaluate what to post, if anything"""
+def run(state, force=False):
     since_last = mins_since_last_post()
-
-    # Human timing: don't post more than every 20 min, vary naturally
-    min_gap = random.randint(18, 45)
+    min_gap = random.randint(20, 50)
     if not force and since_last < min_gap:
-        print(f"Too soon ({since_last:.0f}min since last, want {min_gap}min gap)")
+        print(f"Gap: {since_last:.0f}min (want {min_gap}min)")
         return None
 
     gainers, losers = get_movers()
-    trending = get_trending()
     hour = datetime.now().hour
-    is_market_hours = 9 <= hour < 16
+    is_market = 9 <= hour < 16
 
-    # Priority 1: Big mover with high volume (>10% AND >2x vol) — post with chart
+    # P1: Big gainer with news (highest engagement potential)
     for g in gainers:
-        if g['change_pct'] > 10 and vol_ratio(g['volume'], g['avg_vol']) > 2:
-            if should_post_about(g['symbol'], state):
-                news = get_stock_news(g['symbol'])
-                text = compose_mover(g, news if news else None)
-                media_id = make_and_upload_chart(g['symbol'], g['change_pct'])
-                result = do_tweet(text, "big_mover", media_ids=[media_id] if media_id else None)
-                mark_posted(g['symbol'], state)
-                return result
+        if g['change_pct'] > 10 and should_post(g['symbol'], state):
+            news = get_stock_news(g['symbol'])
+            text = voice_big_gainer(g, news or None)
+            vr = vol_ratio(g['volume'], g['avg_vol'])
+            media_id = make_chart_upload(g['symbol'], g['change_pct']) if vr > 2 else None
+            result = post(text, "big_gainer", [media_id] if media_id else None)
+            mark_seen(g['symbol'], state)
+            return result
 
-    # Priority 2: Severe loser
+    # P2: Severe loser
     for l in losers:
-        if abs(l['change_pct']) > 15:
-            if should_post_about(l['symbol'], state):
-                news = get_stock_news(l['symbol'])
-                text = compose_loser(l, news if news else None)
-                result = do_tweet(text, "big_loser")
-                mark_posted(l['symbol'], state)
-                return result
+        if abs(l['change_pct']) > 15 and should_post(l['symbol'], state):
+            news = get_stock_news(l['symbol'])
+            text = voice_big_loser(l, news or None)
+            result = post(text, "big_loser")
+            mark_seen(l['symbol'], state)
+            return result
 
-    # Priority 3: Volume spike on any mover
+    # P3: Volume spike
     for g in gainers:
         vr = vol_ratio(g['volume'], g['avg_vol'])
-        if vr > 3 and should_post_about(g['symbol'], state):
-            text = compose_mover(g)
-            result = do_tweet(text, "volume_spike")
-            mark_posted(g['symbol'], state)
+        if vr > 3.5 and should_post(g['symbol'], state):
+            text = voice_volume_spike(g)
+            result = post(text, "volume_spike")
+            mark_seen(g['symbol'], state)
             return result
 
-    # Priority 4: Morning/close scan (only once per session)
-    scan_key = "scan_am" if hour < 12 else "scan_pm"
-    last_scan = state.get(scan_key)
-    if not last_scan or (datetime.now() - datetime.fromisoformat(last_scan)).seconds > 14400:
-        if gainers:
-            text = compose_scan(gainers, losers)
-            result = do_tweet(text, "scan")
-            state[scan_key] = datetime.now().isoformat()
-            return result
-
-    # Priority 5: News reaction (if not posted in last hour)
-    if since_last > 60:
+    # P4: News reaction (breaking / macro)
+    if is_market or hour >= 6:
         headlines = get_news()
-        seen = state.get("seen_headlines", [])
+        seen_hl = state.get("seen_headlines", [])
         for h in headlines:
-            if h not in seen:
-                text = compose_news_reaction(h)
-                result = do_tweet(text, "news")
-                state.setdefault("seen_headlines", []).append(h)
-                state["seen_headlines"] = state["seen_headlines"][-20:]
+            clean = re.sub(r'<[^>]+>', '', h).strip()
+            if clean and clean not in seen_hl and len(clean) > 20:
+                text = voice_news(clean)
+                result = post(text, "news")
+                state.setdefault("seen_headlines", []).append(clean)
+                state["seen_headlines"] = state["seen_headlines"][-30:]
                 return result
 
-    print("Nothing worth posting right now")
+    # P5: Scan (once per period)
+    period = "am" if hour < 12 else "pm"
+    scan_key = f"scan_{datetime.now().strftime('%Y%m%d')}_{period}"
+    if scan_key not in state.get("scan_done", {}) and gainers:
+        text = voice_scan(gainers, losers)
+        result = post(text, "scan")
+        state.setdefault("scan_done", {})[scan_key] = datetime.now().isoformat()
+        return result
+
+    # P6: Educational/viral post (mix in occasionally)
+    if since_last > 90 and random.random() < 0.3:
+        text = voice_educational()
+        return post(text, "educational")
+
+    print("Nothing worth posting")
     return None
 
-def do_tweet(text, post_type, media_ids=None):
+def post(text, ptype, media_ids=None):
     client = get_client()
     r = client.create_tweet(text=text, media_ids=media_ids)
-    tweet_id = r.data["id"]
-    url = f"https://twitter.com/jeeniferdq/status/{tweet_id}"
+    tid = r.data["id"]
+    url = f"https://twitter.com/jeeniferdq/status/{tid}"
     log = []
     if LOG.exists():
         try: log = json.loads(LOG.read_text())
         except: pass
-    log.append({"ts": datetime.now().isoformat(), "type": post_type, "text": text, "id": tweet_id, "url": url})
+    log.append({"ts": datetime.now().isoformat(), "type": ptype, "text": text, "id": tid, "url": url})
     LOG.write_text(json.dumps(log, indent=2))
-    print(f"Posted [{post_type}] {url}")
-    print(f"  > {text[:80]}")
-    return tweet_id, url
+    print(f"Posted [{ptype}] {url}")
+    print(f"  > {text[:100].replace(chr(10),' ')}")
+    return tid, url
+
+def delete(tweet_id):
+    get_client().delete_tweet(tweet_id)
+    print(f"Deleted {tweet_id}")
 
 if __name__ == "__main__":
+    if "--delete" in sys.argv:
+        idx = sys.argv.index("--delete")
+        delete(sys.argv[idx+1])
+        sys.exit(0)
     force = "--force" in sys.argv
     state = load_state()
-    result = run_once(state, force=force)
+    result = run(state, force=force)
     save_state(state)
-    if result:
-        print(f"Done: {result[1]}")
+    if result: print(result[1])

@@ -9,4 +9,4 @@ RUN pip install -r requirements.txt
 
 COPY . .
 
-CMD ["python", "web3/liquidation-bot-v6.py"]
+CMD ["python", "web3/liquidation-bot-v7.py"]

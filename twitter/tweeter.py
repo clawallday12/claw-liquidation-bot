@@ -1,10 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-@jeeniferdq Twitter engine v2
-- ASCII-safe text (no encoding issues)
-- Hook-driven copy based on writing-x-posts skill
-- Deduplication built in
-- Real Yahoo Finance data
+@jeeniferdq - Finance Twitter engine v3
+Voice: real human trader. No AI tells. No CTAs. No fake enthusiasm.
+Studies: @unusual_whales, @StockMKTNewz, @zerohedge, @DeItaone style
 """
 import json, sys, os, requests, warnings, random
 from datetime import datetime
@@ -54,21 +52,58 @@ def get_movers():
                         "price": q.get("regularMarketPrice",0),
                         "change_pct": q.get("regularMarketChangePercent",0),
                         "volume": q.get("regularMarketVolume",0),
+                        "avg_vol": q.get("averageDailyVolume3Month",0),
                     })
         except: pass
     return gainers, losers
 
 def get_trending():
     try:
-        r = requests.get(
-            "https://query1.finance.yahoo.com/v1/finance/trending/US?count=10",
-            headers=HEADERS, timeout=8, verify=False
-        )
+        r = requests.get("https://query1.finance.yahoo.com/v1/finance/trending/US?count=10", headers=HEADERS, timeout=8, verify=False)
         if r.status_code == 200:
             quotes = r.json()["finance"]["result"][0]["quotes"]
             return [q["symbol"] for q in quotes if not q["symbol"].endswith("-USD")]
     except: pass
     return []
+
+def get_news_rss():
+    """Get news headlines from Google News RSS - no key needed"""
+    headlines = []
+    feeds = [
+        "https://news.google.com/rss/search?q=stock+market+today&hl=en-US&gl=US&ceid=US:en",
+        "https://news.google.com/rss/search?q=earnings+stocks&hl=en-US&gl=US&ceid=US:en",
+    ]
+    for url in feeds:
+        try:
+            r = requests.get(url, headers=HEADERS, timeout=8, verify=False)
+            if r.status_code == 200:
+                import re
+                titles = re.findall(r'<title><!\[CDATA\[(.*?)\]\]></title>', r.text)
+                headlines += [t for t in titles[1:6] if len(t) > 20]
+                if headlines: break
+        except: pass
+    return headlines
+
+def get_stock_news(symbol):
+    """Get news for specific ticker via Google News RSS"""
+    try:
+        import re
+        r = requests.get(
+            f"https://news.google.com/rss/search?q={symbol}+stock&hl=en-US&gl=US&ceid=US:en",
+            headers=HEADERS, timeout=8, verify=False
+        )
+        if r.status_code == 200:
+            titles = re.findall(r'<title><!\[CDATA\[(.*?)\]\]></title>', r.text)
+            return [t for t in titles[1:4] if len(t) > 15]
+    except: pass
+    return []
+
+def fmt_vol_ratio(vol, avg):
+    if not vol or not avg or avg == 0: return ""
+    ratio = vol / avg
+    if ratio > 3: return f" ({ratio:.0f}x avg vol)"
+    if ratio > 1.5: return f" ({ratio:.1f}x avg vol)"
+    return ""
 
 def fmt_vol(v):
     if not v: return "N/A"
@@ -76,122 +111,134 @@ def fmt_vol(v):
     if v > 1e6: return f"{v/1e6:.1f}M"
     return f"{v/1e3:.0f}K"
 
-# --- POST GENERATORS (hook-driven, ASCII-safe) ---
+# --- HUMAN-VOICE POST GENERATORS ---
+# Rule: No CTAs. No "follow for". No "here's what you need to know".
+# Sound like a trader watching screens, not a content creator.
 
-def post_premarket():
-    gainers, losers = get_movers()
-    if not gainers: return None, None
-    date = datetime.now().strftime("%b %d")
-    top = gainers[0]
-
-    hooks = [
-        f"Before the bell - {date}\n\n",
-        f"Market opens soon. Here's what's moving - {date}\n\n",
-        f"Early movers to watch - {date}\n\n",
-    ]
-    text = random.choice(hooks)
-    text += "Gainers:\n"
-    for g in gainers[:4]:
-        text += f"${g['symbol']} {g['change_pct']:+.1f}%\n"
-    text += "\nLosers:\n"
-    for l in losers[:3]:
-        text += f"${l['symbol']} {l['change_pct']:+.1f}%\n"
-    text += "\nWhich are you watching? Follow for daily coverage."
-    return text.strip(), "premarket"
-
-def post_breakdown():
+def post_single_mover():
     gainers, _ = get_movers()
     if not gainers: return None, None
-    top = gainers[0]
-    sym = top['symbol']
-    pct = top['change_pct']
-    price = top['price']
+    g = gainers[0]
+    sym, pct, price = g['symbol'], g['change_pct'], g['price']
+    vol = fmt_vol(g['volume'])
+    vol_ratio = fmt_vol_ratio(g['volume'], g['avg_vol'])
+    news = get_stock_news(sym)
+    catalyst = news[0] if news else None
+
+    if catalyst and len(catalyst) < 100:
+        templates = [
+            f"${sym} +{pct:.0f}%\n\n{catalyst}",
+            f"${sym} ripping today\n\n{catalyst}\n\nStock up {pct:.0f}% on {vol} volume{vol_ratio}",
+            f"${sym} up {pct:.0f}% - {catalyst}",
+        ]
+    else:
+        templates = [
+            f"${sym} up {pct:.0f}% on {vol} volume{vol_ratio}\n\nwatching to see if this holds",
+            f"${sym} ripping {pct:.0f}%\n\nprice ${price:.2f}, volume {vol}{vol_ratio}\n\ninsane move",
+            f"${sym} {pct:.0f}% move today\n\n{vol} shares traded{vol_ratio}\n\nbig",
+            f"that ${sym} move is wild. +{pct:.0f}% on {vol} volume{vol_ratio}",
+        ]
+    return random.choice(templates).strip(), "mover_spotlight"
+
+def post_losers_reaction():
+    _, losers = get_movers()
+    if not losers: return None, None
+    top = losers[0]
+    sym, pct, price = top['symbol'], top['change_pct'], top['price']
     vol = fmt_vol(top['volume'])
+    news = get_stock_news(sym)
+    catalyst = news[0] if news else None
 
-    templates = [
-        f"${sym} is up {pct:.0f}% today.\n\nPrice: ${price:.2f}\nVolume: {vol}\n\nBig moves don't happen for no reason. What's your take?",
-        f"${sym} ripping {pct:.0f}% right now.\n\nHere's what you need to know:\n- Price: ${price:.2f}\n- Volume: {vol}\n\nSomething is happening here. Follow to stay updated.",
-        f"Eye on ${sym} today.\n\n{pct:.0f}% move on {vol} volume.\n\nThis kind of action creates opportunities.\n\nWhat are you seeing?",
-    ]
-    return random.choice(templates).strip(), "breakdown"
+    if catalyst and len(catalyst) < 100:
+        templates = [
+            f"${sym} getting obliterated today\n\n{catalyst}\n\ndown {abs(pct):.0f}%",
+            f"${sym} -{abs(pct):.0f}%\n\n{catalyst}",
+        ]
+    else:
+        templates = [
+            f"${sym} down {abs(pct):.0f}% on {vol} volume\n\nouch",
+            f"${sym} getting hit hard today. -{abs(pct):.0f}%\n\n{vol} volume, price ${price:.2f}",
+            f"rough day for ${ sym} holders. -{abs(pct):.0f}%",
+        ]
+    return random.choice(templates).strip(), "loser_reaction"
 
-def post_movers():
+def post_morning_scan():
     gainers, losers = get_movers()
     if not gainers: return None, None
     date = datetime.now().strftime("%b %d")
 
-    hooks = [
-        f"Market movers right now ({date}):\n\n",
-        f"Stocks making moves today ({date}):\n\n",
-        f"The market is moving. Here's what matters ({date}):\n\n",
-    ]
-    text = random.choice(hooks)
-    text += "Winners:\n"
+    # Raw, no-fluff scan format like real accounts
+    lines = [f"morning scan {date}"]
+    lines.append("")
+    lines.append("moving up:")
     for g in gainers[:4]:
-        text += f"${g['symbol']} {g['change_pct']:+.1f}%\n"
-    text += "\nGetting hit:\n"
+        vol_r = fmt_vol_ratio(g['volume'], g['avg_vol'])
+        lines.append(f"${g['symbol']} +{g['change_pct']:.1f}%{vol_r}")
+    lines.append("")
+    lines.append("moving down:")
     for l in losers[:3]:
-        text += f"${l['symbol']} {l['change_pct']:+.1f}%\n"
-    text += "\nFollow for real-time movers every day."
-    return text.strip(), "movers"
+        lines.append(f"${l['symbol']} -{abs(l['change_pct']):.1f}%")
+    return "\n".join(lines).strip(), "morning_scan"
 
-def post_trending():
-    trending = get_trending()
-    stocks = [t for t in trending if not t.endswith('-USD')][:6]
-    if not stocks: return None, None
-
-    hooks = [
-        "Stocks everyone is watching right now:\n\n",
-        "Wall Street's attention is here right now:\n\n",
-        "These tickers are trending today:\n\n",
+def post_volume_alert():
+    gainers, _ = get_movers()
+    high_vol = [g for g in gainers if g.get('avg_vol') and g['volume'] > g['avg_vol'] * 2]
+    if not high_vol: return post_single_mover()
+    g = high_vol[0]
+    sym = g['symbol']
+    vol = fmt_vol(g['volume'])
+    avg = fmt_vol(g['avg_vol'])
+    ratio = round(g['volume'] / g['avg_vol'], 1)
+    templates = [
+        f"${sym} trading {vol} shares today\n\naverage is {avg}\n\n{ratio}x normal volume. something is going on",
+        f"unusual volume on ${sym}\n\n{ratio}x average today\n\n{vol} vs normal {avg}",
+        f"${sym} volume is absurd right now\n\n{ratio}x average\n\nprice up {g['change_pct']:.0f}%",
     ]
-    text = random.choice(hooks)
-    for s in stocks:
-        text += f"${s}\n"
-    text += "\nWhich one are you in? Drop it below."
-    return text.strip(), "trending"
+    return random.choice(templates).strip(), "volume_alert"
 
-def post_midday():
+def post_midday_check():
     gainers, losers = get_movers()
     if not gainers: return None, None
-    text = "Midday check:\n\n"
-    text += "Leading the session:\n"
-    for g in gainers[:3]:
-        text += f"${g['symbol']} {g['change_pct']:+.1f}%\n"
-    text += "\nGetting sold:\n"
-    for l in losers[:3]:
-        text += f"${l['symbol']} {l['change_pct']:+.1f}%\n"
-    text += "\nStill 2 hours to go. Stay locked in."
-    return text.strip(), "midday"
+    templates = [
+        f"midday\n\n{gainers[0]['symbol']} still running (+{gainers[0]['change_pct']:.0f}%)\n{losers[0]['symbol']} still bleeding (-{abs(losers[0]['change_pct']):.0f}%)\n\nmarket's not slowing down",
+        f"halfway through the session\n\nleaders: ${gainers[0]['symbol']} ${gainers[1]['symbol'] if len(gainers)>1 else ''}\nlaggards: ${losers[0]['symbol']} ${losers[1]['symbol'] if len(losers)>1 else ''}\n\nstill a lot of time left",
+        f"${gainers[0]['symbol']} holding its gains at midday. +{gainers[0]['change_pct']:.0f}%\n${losers[0]['symbol']} still ugly at -{abs(losers[0]['change_pct']):.0f}%",
+    ]
+    return random.choice(templates).strip(), "midday"
 
-def post_eod():
+def post_close():
     gainers, losers = get_movers()
     if not gainers: return None, None
     date = datetime.now().strftime("%b %d")
-    text = f"Market close - {date}\n\n"
-    text += "Today's winners:\n"
-    for g in gainers[:3]:
-        text += f"${g['symbol']} {g['change_pct']:+.1f}%\n"
-    text += "\nToday's losers:\n"
-    for l in losers[:3]:
-        text += f"${l['symbol']} {l['change_pct']:+.1f}%\n"
-    text += "\nSee you at pre-market tomorrow. Follow so you never miss a move."
-    return text.strip(), "eod"
-
-def post_hook_thread_opener():
-    """High-engagement hook post based on writing-x-posts skill"""
-    gainers, losers = get_movers()
-    if not gainers: return None, None
-    top = gainers[0]
-    sym = top['symbol']
-    pct = top['change_pct']
-
     templates = [
-        f"I track hundreds of stocks every day.\n\n${sym} is the one making noise right now.\n\nUp {pct:.0f}%. Here's what I'm watching:",
-        f"Most traders missed ${sym} this morning.\n\nIt was up {pct:.0f}% before most people checked their phones.\n\nHere's the setup that made it obvious:",
-        f"${sym} just moved {pct:.0f}%.\n\nIf you weren't watching, here's why it matters:\n\nAnd what it means for the rest of the day:",
+        f"close - {date}\n\nbest: ${gainers[0]['symbol']} +{gainers[0]['change_pct']:.0f}%\nworst: ${losers[0]['symbol']} -{abs(losers[0]['change_pct']):.0f}%\n\nwild session",
+        f"that's a wrap for {date}\n\n${gainers[0]['symbol']} the big winner at +{gainers[0]['change_pct']:.0f}%\n${losers[0]['symbol']} got destroyed -{abs(losers[0]['change_pct']):.0f}%",
+        f"eod {date}\n\n{', '.join(['$'+g['symbol'] for g in gainers[:3]])} green\n{', '.join(['$'+l['symbol'] for l in losers[:3]])} red\n\nback tomorrow",
     ]
-    return random.choice(templates).strip(), "hook_post"
+    return random.choice(templates).strip(), "close"
+
+def post_trending_raw():
+    trending = get_trending()
+    if not trending: return None, None
+    stocks = [t for t in trending if not t.endswith('-USD')][:5]
+    templates = [
+        "tickers getting attention right now:\n\n" + "\n".join(f"${s}" for s in stocks),
+        "what wall street is watching today:\n\n" + " ".join(f"${s}" for s in stocks),
+        "trending:\n\n" + "\n".join(f"${s}" for s in stocks[:4]),
+    ]
+    return random.choice(templates).strip(), "trending"
+
+def post_news_take():
+    headlines = get_news_rss()
+    if not headlines: return None, None
+    h = headlines[0]
+    templates = [
+        h,
+        f"notable: {h}",
+    ]
+    return random.choice(templates).strip(), "news"
+
+# --- CORE LOOP ---
 
 def auto_post():
     if recently_posted(25):
@@ -199,34 +246,32 @@ def auto_post():
         return None, None
 
     hour = datetime.now().hour
-    # Vary content by time + some randomness for freshness
     if 6 <= hour < 9:
-        fns = [post_premarket, post_premarket, post_trending]
+        pool = [post_morning_scan, post_morning_scan, post_single_mover]
     elif 9 <= hour < 11:
-        fns = [post_breakdown, post_hook_thread_opener, post_movers]
+        pool = [post_volume_alert, post_single_mover, post_news_take, post_morning_scan]
     elif 11 <= hour < 13:
-        fns = [post_midday, post_breakdown, post_movers]
+        pool = [post_midday_check, post_single_mover, post_losers_reaction]
     elif 13 <= hour < 15:
-        fns = [post_trending, post_breakdown, post_hook_thread_opener]
+        pool = [post_volume_alert, post_trending_raw, post_single_mover]
     elif 15 <= hour < 17:
-        fns = [post_movers, post_breakdown, post_eod]
+        pool = [post_single_mover, post_losers_reaction, post_close]
     else:
-        fns = [post_eod, post_movers]
+        pool = [post_close, post_news_take, post_trending_raw]
 
-    for fn in random.sample(fns, len(fns)):
+    random.shuffle(pool)
+    for fn in pool:
         text, ptype = fn()
         if text:
             return tweet(text, ptype)
     return None, None
 
 def tweet(text: str, post_type: str):
-    # Ensure clean ASCII-compatible encoding
     clean = text.encode('utf-8').decode('utf-8')
     client = get_client()
     r = client.create_tweet(text=clean)
     tweet_id = r.data["id"]
     url = f"https://twitter.com/jeeniferdq/status/{tweet_id}"
-
     log = []
     if LOG.exists():
         try: log = json.loads(LOG.read_text())
@@ -236,18 +281,26 @@ def tweet(text: str, post_type: str):
     print(f"Posted [{post_type}] -> {url}")
     return tweet_id, url
 
+def delete_tweet(tweet_id):
+    client = get_client()
+    r = client.delete_tweet(tweet_id)
+    print(f"Deleted {tweet_id}: {r}")
+
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "auto"
     dispatch = {
-        "premarket": post_premarket, "movers": post_movers,
-        "breakdown": post_breakdown, "trending": post_trending,
-        "midday": post_midday, "eod": post_eod,
-        "hook": post_hook_thread_opener,
+        "mover": post_single_mover, "loser": post_losers_reaction,
+        "scan": post_morning_scan, "volume": post_volume_alert,
+        "midday": post_midday_check, "close": post_close,
+        "trending": post_trending_raw, "news": post_news_take,
     }
-    if cmd in dispatch:
+    if cmd == "delete" and len(sys.argv) > 2:
+        delete_tweet(sys.argv[2])
+    elif cmd in dispatch:
         text, ptype = dispatch[cmd]()
         if text:
-            print(f"--- PREVIEW [{ptype}] ---\n{text.encode('ascii','replace').decode()}\n[{len(text)} chars]")
+            safe = text.encode('ascii', 'replace').decode()
+            print(f"--- [{ptype}] ---\n{safe}\n[{len(text)} chars]")
             if "--post" in sys.argv:
                 tweet(text, ptype)
     else:
